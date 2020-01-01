@@ -66,14 +66,18 @@ const onMessage = function(request, sender, callback) {
 
     case 'listsFromNetFilter':
         µb.staticFilteringReverseLookup.fromNetFilter(
-            request.compiledFilter,
-            request.rawFilter,
-            callback
-        );
+            request.rawFilter
+        ).then(response => {
+            callback(response);
+        });
         return;
 
     case 'listsFromCosmeticFilter':
-        µb.staticFilteringReverseLookup.fromCosmeticFilter(request, callback);
+        µb.staticFilteringReverseLookup.fromCosmeticFilter(
+            request
+        ).then(response => {
+            callback(response);
+        });
         return;
 
     case 'reloadAllFilters':
@@ -183,78 +187,78 @@ vAPI.messaging.setup(onMessage);
 
 const µb = µBlock;
 
-const getHostnameDict = function(hostnameToCountMap) {
-    const r = Object.create(null);
-    const domainFromHostname = µb.URI.domainFromHostname;
-    // Note: destructuring assignment not supported before Chromium 49.
+const getHostnameDict = function(hostnameToCountMap, out) {
+    const hnDict = Object.create(null);
+    const cnSet = [];
     for ( const [ hostname, hnCounts ] of hostnameToCountMap ) {
-        if ( r[hostname] !== undefined ) { continue; }
-        const domain = domainFromHostname(hostname) || hostname;
+        if ( hnDict[hostname] !== undefined ) { continue; }
+        const domain = vAPI.domainFromHostname(hostname) || hostname;
         const dnCounts = hostnameToCountMap.get(domain) || 0;
         let blockCount = dnCounts & 0xFFFF;
         let allowCount = dnCounts >>> 16 & 0xFFFF;
-        if ( r[domain] === undefined ) {
-            r[domain] = {
-                domain: domain,
-                blockCount: blockCount,
-                allowCount: allowCount,
+        if ( hnDict[domain] === undefined ) {
+            hnDict[domain] = {
+                domain,
+                blockCount,
+                allowCount,
                 totalBlockCount: blockCount,
-                totalAllowCount: allowCount
+                totalAllowCount: allowCount,
             };
+            const cname = vAPI.net.canonicalNameFromHostname(domain);
+            if ( cname !== undefined ) {
+                cnSet.push(cname);
+            }
         }
-        const domainEntry = r[domain];
+        const domainEntry = hnDict[domain];
         blockCount = hnCounts & 0xFFFF;
         allowCount = hnCounts >>> 16 & 0xFFFF;
         domainEntry.totalBlockCount += blockCount;
         domainEntry.totalAllowCount += allowCount;
         if ( hostname === domain ) { continue; }
-        r[hostname] = {
-            domain: domain,
-            blockCount: blockCount,
-            allowCount: allowCount,
+        hnDict[hostname] = {
+            domain,
+            blockCount,
+            allowCount,
             totalBlockCount: 0,
-            totalAllowCount: 0
+            totalAllowCount: 0,
         };
+        const cname = vAPI.net.canonicalNameFromHostname(hostname);
+        if ( cname !== undefined ) {
+            cnSet.push(cname);
+        }
     }
-    return r;
+    out.hostnameDict = hnDict;
+    out.cnameSet = cnSet;
 };
 
 const getFirewallRules = function(srcHostname, desHostnames) {
-    var r = {};
-    var df = µb.sessionFirewall;
-    r['/ * *'] = df.lookupRuleData('*', '*', '*');
-    r['/ * image'] = df.lookupRuleData('*', '*', 'image');
-    r['/ * 3p'] = df.lookupRuleData('*', '*', '3p');
-    r['/ * inline-script'] = df.lookupRuleData('*', '*', 'inline-script');
-    r['/ * 1p-script'] = df.lookupRuleData('*', '*', '1p-script');
-    r['/ * 3p-script'] = df.lookupRuleData('*', '*', '3p-script');
-    r['/ * 3p-frame'] = df.lookupRuleData('*', '*', '3p-frame');
-    if ( typeof srcHostname !== 'string' ) { return r; }
+    const out = {};
+    const df = µb.sessionFirewall;
+    out['/ * *'] = df.lookupRuleData('*', '*', '*');
+    out['/ * image'] = df.lookupRuleData('*', '*', 'image');
+    out['/ * 3p'] = df.lookupRuleData('*', '*', '3p');
+    out['/ * inline-script'] = df.lookupRuleData('*', '*', 'inline-script');
+    out['/ * 1p-script'] = df.lookupRuleData('*', '*', '1p-script');
+    out['/ * 3p-script'] = df.lookupRuleData('*', '*', '3p-script');
+    out['/ * 3p-frame'] = df.lookupRuleData('*', '*', '3p-frame');
+    if ( typeof srcHostname !== 'string' ) { return out; }
 
-    r['. * *'] = df.lookupRuleData(srcHostname, '*', '*');
-    r['. * image'] = df.lookupRuleData(srcHostname, '*', 'image');
-    r['. * 3p'] = df.lookupRuleData(srcHostname, '*', '3p');
-    r['. * inline-script'] = df.lookupRuleData(srcHostname,
+    out['. * *'] = df.lookupRuleData(srcHostname, '*', '*');
+    out['. * image'] = df.lookupRuleData(srcHostname, '*', 'image');
+    out['. * 3p'] = df.lookupRuleData(srcHostname, '*', '3p');
+    out['. * inline-script'] = df.lookupRuleData(srcHostname,
         '*',
         'inline-script'
     );
-    r['. * 1p-script'] = df.lookupRuleData(srcHostname, '*', '1p-script');
-    r['. * 3p-script'] = df.lookupRuleData(srcHostname, '*', '3p-script');
-    r['. * 3p-frame'] = df.lookupRuleData(srcHostname, '*', '3p-frame');
+    out['. * 1p-script'] = df.lookupRuleData(srcHostname, '*', '1p-script');
+    out['. * 3p-script'] = df.lookupRuleData(srcHostname, '*', '3p-script');
+    out['. * 3p-frame'] = df.lookupRuleData(srcHostname, '*', '3p-frame');
 
     for ( const desHostname in desHostnames ) {
-        r[`/ ${desHostname} *`] = df.lookupRuleData(
-            '*',
-            desHostname,
-            '*'
-        );
-        r[`. ${desHostname} *`] = df.lookupRuleData(
-            srcHostname,
-            desHostname,
-            '*'
-        );
+        out[`/ ${desHostname} *`] = df.lookupRuleData('*', desHostname, '*');
+        out[`. ${desHostname} *`] = df.lookupRuleData(srcHostname, desHostname, '*');
     }
-    return r;
+    return out;
 };
 
 const popupDataFromTabId = function(tabId, tabTitle) {
@@ -300,7 +304,7 @@ const popupDataFromTabId = function(tabId, tabTitle) {
         r.pageBlockedRequestCount = pageStore.perLoadBlockedRequestCount;
         r.pageAllowedRequestCount = pageStore.perLoadAllowedRequestCount;
         r.netFilteringSwitch = pageStore.getNetFilteringSwitch();
-        r.hostnameDict = getHostnameDict(pageStore.hostnameToCountMap);
+        getHostnameDict(pageStore.hostnameToCountMap, r);
         r.contentLastModified = pageStore.contentLastModified;
         r.firewallRules = getFirewallRules(rootHostname, r.hostnameDict);
         r.canElementPicker = µb.URI.isNetworkURI(r.rawURL);
@@ -362,32 +366,35 @@ const popupDataFromRequest = async function(request) {
     return popupDataFromTabId(tabId, tabTitle);
 };
 
-const getDOMStats = async function(tabId) {
+const getElementCount = async function(tabId, what) {
     const results = await vAPI.tabs.executeScript(tabId, {
         allFrames: true,
-        file: '/js/scriptlets/dom-survey.js',
+        file: `/js/scriptlets/dom-survey-${what}.js`,
         runAt: 'document_end',
     });
 
-    let elementCount = 0;
-    let scriptCount = 0;
-    results.forEach(result => {
-        if ( result instanceof Object === false ) { return; }
-        elementCount += result.elementCount;
-        scriptCount += result.scriptCount;
-    });
+    let total = 0;
+    for ( const count of results ) {
+        if ( typeof count !== 'number' ) { continue; }
+        if ( count === -1 ) { return -1; }
+        total += count;
+    }
 
-    return { elementCount, scriptCount };
+    return total;
 };
 
 const onMessage = function(request, sender, callback) {
-    let pageStore;
-
     // Async
     switch ( request.what ) {
-    case 'getPopupLazyData':
-        getDOMStats(request.tabId).then(results => {
-            callback(results);
+    case 'getHiddenElementCount':
+        getElementCount(request.tabId, 'elements').then(count => {
+            callback(count);
+        });
+        return;
+
+    case 'getScriptCount':
+        getElementCount(request.tabId, 'scripts').then(count => {
+            callback(count);
         });
         return;
 
@@ -403,6 +410,7 @@ const onMessage = function(request, sender, callback) {
 
     // Sync
     let response;
+    let pageStore;
 
     switch ( request.what ) {
     case 'hasPopupContentChanged':
@@ -1207,7 +1215,6 @@ const getLoggerData = async function(details, activeTabId, callback) {
         colorBlind: µb.userSettings.colorBlindFriendly,
         entries: µb.logger.readAll(details.ownerId),
         filterAuthorMode: µb.hiddenSettings.filterAuthorMode,
-        maxEntries: µb.userSettings.requestLogMaxEntries,
         tabIdsToken: µb.pageStoresToken,
         tooltips: µb.userSettings.tooltipsDisabled === false
     };
@@ -1482,7 +1489,7 @@ const logCSPViolations = function(pageStore, request) {
             µb.staticNetFilteringEngine.matchAndFetchData(fctxt, 'csp');
         for ( const directive of staticDirectives ) {
             if ( directive.result !== 1 ) { continue; }
-            cspData.set(directive.data, directive.logData());
+            cspData.set(directive.getData('csp'), directive.logData());
         }
 
         fctxt.type = 'inline-script';
